@@ -1,0 +1,238 @@
+---
+title: "SentimentAnalisis"
+author: "Muhammad Hafizh Akmal - Novia Adelia"
+date: "2022-12-01"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r }
+library(tm)
+library(wordcloud2)
+library(vroom)
+library(here)
+library(RTextTools)
+library(dplyr)
+library(wordcloud)
+library(shiny)
+library(ggplot2)
+library(plotly)
+library(e1071) 
+library(caret) 
+library(syuzhet)
+library(tidymodels)
+```
+
+```{r}
+data <- read.csv("reviews_shopee_clean.csv")
+glimpse(data)
+data <- data %>% select(label, text)
+
+# tambah kelas baru untuk menyeleksi bahwa label lebih dari 3 merupakan nilai 1 atau baik
+data <- data %>% mutate(kelas = ifelse(label>=3, "1", "0"))
+data_label <- data %>% mutate(sentiment = ifelse(kelas>0, "Positif", "Negatif"))
+write.csv(data_label, file = "datalabel.csv")
+# mengubah label dan kelas menjadi faktor
+data$label <-as.factor(data$label)
+data$kelas <-as.factor(data$kelas)
+
+set.seed(17900)
+data <- data[sample(nrow(data)),]
+data <- data[sample(nrow(data)),]
+glimpse(data)
+
+
+```
+
+
+```{r}
+corpus <- Corpus(VectorSource(data$text))
+corpus
+inspect(corpus[1:10])
+corpus_clean <- corpus %>%
+  tm_map(content_transformer(tolower)) %>%
+  tm_map(removePunctuation) %>%
+  tm_map(removeNumbers) %>%
+  tm_map(removeWords, stopwords(kind = "en")) %>%
+  tm_map(stripWhitespace)
+
+dtm <- DocumentTermMatrix(corpus_clean)
+inspect(dtm[20:30, 20:30])
+```
+
+```{r}
+data_split <- initial_split(data)
+data_split
+
+data_train <- data[1:1500,]
+data_test <- data[1500:2000,]
+
+dtm_train <- dtm[1:1500,]
+dtm_test <- dtm[1500:2000,]
+
+# cc = corpus clean
+cc_train <- corpus_clean[1:1500]
+cc_test <- corpus_clean[1500:2000]
+```
+
+```{r}
+dim(dtm_train)
+
+# menyeleksi feature sehingga yg diambil adalah kata yang muncul setidaknya 60 kali
+word_freq <- findFreqTerms(dtm_train,60)
+
+length(word_freq)
+
+# menyesuaikan fitur pada data train dan test dengan fitur yg sudah diseleksi
+dtm_train_a <- cc_train %>%
+  DocumentTermMatrix(control = list(dictionary = word_freq))
+
+dtm_test_a <- cc_test %>%
+  DocumentTermMatrix(control = list(dictionary = word_freq))
+
+dim(dtm_train_a)
+dim(dtm_test_a)
+```
+
+```{r}
+# fungsi untuk mengubah nilai 0 dan 1 menjadi no dan yes
+convert <- function(x) {
+  y <- ifelse(x>0, 1, 0)
+  y <- factor(y, levels = c(0,1), labels = c("No","Yes"))
+  y
+}
+
+train_b <- apply(dtm_train_a, 2, convert)
+test_b <- apply(dtm_test_a, 2, convert)
+
+glimpse(train_b)
+length(train_b)
+```
+
+```{r}
+# membuat model naive bayes
+classifier <- naiveBayes(train_b, data_train$label, laplace = 1)
+
+# menyimpan model untuk aplikasi
+save(classifier, file = "NaiveBayesClassifier.rda")
+
+# test model naive bayes
+prediksi <- predict(classifier, test_b)
+
+# membuat tabel hasil prediksi
+table("Prediksi" = prediksi, "Asli" = data_test$label)
+
+# mengecek akurasi
+conf <- confusionMatrix(prediksi, data_test$label)
+conf$overall['Accuracy']
+```
+
+# Berdasarkan Kelas
+```{r}
+# membuat model naive bayes
+classifier2 <- naiveBayes(train_b, data_train$kelas, laplace = 1)
+
+# menyimpan model untuk aplikasi
+save(classifier2, file = "NaiveBayesClassifier2.rda")
+
+# test model naive bayes
+prediksi2 <- predict(classifier2, test_b)
+
+# membuat tabel hasil prediksi
+table("Prediksi" = prediksi2, "Asli" = data_test$kelas)
+
+# mengecek akurasi
+conf2 <- confusionMatrix(prediksi2, data_test$kelas)
+conf2$overall['Accuracy']
+```
+
+#barplot
+```{r}
+d<-read.csv("reviews_shopee_clean.csv",stringsAsFactors = FALSE) 
+#merubah text menjadi char 
+review <-as.character(d$text) 
+
+s <- get_nrc_sentiment(review, cl = NULL, language = "english", lowercase = TRUE)
+
+#klasifikasi data
+review_combine<-cbind(d$text,s)
+par(mar=rep(3,4))
+a<- barplot(colSums(s),col=rainbow(10), xlab ='emotion', ylab='count',main='Sentiment Analysis')
+barplt <- a
+```
+
+#wordcloud
+```{r}
+library(dplyr)
+library(wordcloud2)
+
+data1 <- read.csv('reviews_shopee_clean.csv')
+text <- data1$text
+docs <- Corpus(VectorSource(text))
+docs <- tm_map(docs, removeWords, c("work", "from", "home", "the", "will", "you", "and", "with", "for"))
+
+dtm <- TermDocumentMatrix(docs) 
+matrix <- as.matrix(dtm) 
+words <- sort(rowSums(matrix),decreasing=TRUE) 
+df <- data.frame(word = names(words),freq=words)
+
+p <- wordcloud2(data=df, size=1.6, color='random-dark')
+p
+```
+
+#ui
+```{r}
+#shiny
+#membuka file csv
+dataLabel<- read.csv("datalabel.csv")
+dataLabel <- dataLabel %>% select(label, text, sentiment)
+#mengatur tampilan web
+ui <- fluidPage(
+   titlePanel("Analisis Sentimen pada Ulasan Shopee dengan Metode Naive Bayes"), #membuat judul
+    # Show a plot of the generated distribution
+   mainPanel(#tab
+    #plot output : untuk scatterplot
+            tabsetPanel(type = "tabs",
+                         tabPanel("Confussion Matrix and Statistic", verbatimTextOutput("result")),
+                        #tab data cleaning
+                        tabPanel("List sentiment", DT::dataTableOutput('tbl1')),
+                        #tab scatterplot/grafik
+                        tabPanel("Histogram", plotOutput("scatterplot")), 
+                        # tab wordcloud
+                        tabPanel("Wordcloud", wordcloud2Output("Wordcloud2")),
+            )
+   )
+    
+)
+```
+
+#web
+```{r}
+#tempat data akan dianalisis dan diproses, hasilnya ditampilkan/diplotkan pada bagian mainpanel() ui
+server <- function(input, output) {
+  #output Data
+  output$result <-renderPrint({
+      conf2
+  })
+  #data ditampilkan dalam beberapa halaman
+  #data cleaning
+  output$tbl1 = DT::renderDataTable({
+        DT::datatable(dataLabel, options = list(lengthChange = FALSE))
+  })
+  
+  #barplot
+  output$scatterplot <- renderPlot({
+    barplot(colSums(s), col=rainbow(10), ylab='count',main='Sentiment Analysis')
+  }, height = 400)
+  
+  #wordcloud
+  output$Wordcloud2 <- renderWordcloud2({
+    p
+  })
+}
+shinyApp(ui = ui, server = server)
+```
+
